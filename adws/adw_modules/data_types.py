@@ -142,6 +142,10 @@ class QualityCheckSpec(BaseModel):
     operation: QualityOperation
     argv: list[str]
     timeout_seconds: int = 120
+    # True when `argv` is a one-element `[command_string]` to run through the
+    # shell, rather than a real argv list — set for an ADW's TEST_COMMAND when
+    # it was configured as a string instead of a list.
+    shell: bool = False
 
 
 class QualityCheckResult(BaseModel):

@@ -13,7 +13,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from adw_modules.task_file import Task, adw_branch, task_branch
+from adw_modules.task_file import Task, adw_branch, set_status, task_branch
 
 
 def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -108,3 +108,34 @@ def mr_merge(worktree: Path, source: str) -> None:
 
 def remove_worktree(repo: Path, state_dir: Path) -> None:
     _run(repo, "git", "worktree", "remove", "--force", str(state_dir / "worktree"))
+
+
+def flip_status_on_task_branch(state_dir: Path, task: Task, status: str, adw_id: str) -> None:
+    """Flip the task file's status, committed as the FIRST commit on the adw branch.
+
+    There is nowhere else to make this edit: the task branch is not checked out
+    anywhere (the worktree holds the adw branch), so the flip is made there and
+    rides to the task branch at the adw->task merge in `finish_on_task_branch`.
+    Trade-off recorded in FORK.md: `in-progress` becomes visible on the task
+    branch only once the adw branch is pushed, not the instant the ADW starts.
+    """
+    worktree = state_dir / "worktree"
+    set_status(worktree / task.rel_path, status)
+    commit_all(worktree, f"chore: {status} status for {task.slug}", adw_id)
+
+
+def finish_on_task_branch(state_dir: Path, task: Task, adw_id: str) -> str:
+    """After the adw->task MR is merged: land on the task branch, mark it done, open task->main.
+
+    Returns the task->main MR url (or the existing one, recovered the same way
+    `mr_create` recovers from a restart).
+    """
+    worktree = state_dir / "worktree"
+    tbranch = task_branch(task)
+    _run(worktree, "git", "fetch", "origin")
+    _run(worktree, "git", "checkout", tbranch)
+    _run(worktree, "git", "pull")
+    set_status(worktree / task.rel_path, "done")
+    commit_all(worktree, f"chore: done status for {task.slug}", adw_id)
+    push(worktree, tbranch)
+    return mr_create(worktree, tbranch, "main", f"task: {task.slug}", assignee_self=True)

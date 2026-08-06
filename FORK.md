@@ -14,6 +14,7 @@
 - **Task-file driven ADWs**: `adw_full` and `adw_lite` are new entry points that take a task file as their unit of work, instead of the upstream per-script argument conventions.
 - **Worktree/glab git mechanics**: git worktree creation and GitHub CLI (`glab`)/PR mechanics are adapted for this fork's workflow.
 - **pi stderr in trace**: `pi` (the coding agent invocation) stderr is captured into the SQLite trace db alongside stdout, so failures are visible in the trace instead of only on the console.
+- **`in-progress` visibility, simplified**: `adw_lite`'s `launch` phase flips the task file's status on the adw branch (the only branch the worktree has checked out), not on the task branch directly — the task branch is never checked out anywhere at launch time. The flip rides to the task branch at the adw->task merge in `finish`, so `in-progress` becomes visible in the repo once the adw branch is pushed (minutes after launch starts), not the instant the ADW begins. Accepted as a deliberate simplification; revisit if a reader needs to see `in-progress` before the first commit lands.
 
 ## Update procedure
 

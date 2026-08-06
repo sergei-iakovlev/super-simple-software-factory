@@ -63,7 +63,9 @@ def _run(spec: QualityCheckSpec, run) -> QualityCheckResult:
     phase = run.phases[-1]
     output_dir = _check_dir(run, spec.name)
     output_artifact = output_dir / "command.log"
-    command = shlex.join(spec.argv)
+    # A shell spec's argv is a one-element [command_string]; shlex.join would
+    # re-quote it for display, so show it verbatim instead.
+    command = spec.argv[0] if spec.shell else shlex.join(spec.argv)
     env = operator_env()             # the engineer's own shell environment
 
     run.console.note(f"quality {spec.name}: {command}")
@@ -79,6 +81,7 @@ def _run(spec: QualityCheckSpec, run) -> QualityCheckResult:
             capture_output=True,
             text=True,
             timeout=spec.timeout_seconds,
+            shell=spec.shell,
         )
         returncode = completed.returncode
         stdout = completed.stdout
@@ -135,13 +138,26 @@ def _run(spec: QualityCheckSpec, run) -> QualityCheckResult:
 # ── Blocks ────────────────────────────────────────────────────────────────────
 # Replace every argv below. See the banner at the top of this file.
 
+# Set by an ADW from the target repo's process-config.yml (`checks.test-command`)
+# before it runs `test()`. A list runs as a real argv; a string runs through the
+# shell (spec.shell=True); None keeps the placeholder that admits it is fake.
+TEST_COMMAND: list[str] | str | None = None
+
+
 def test(run) -> QualityCheckResult:
     """Run the project's test suite. The highest-value block to wire up first."""
+    if TEST_COMMAND is None:
+        argv, shell = _placeholder("test"), False
+    elif isinstance(TEST_COMMAND, str):
+        argv, shell = [TEST_COMMAND], True
+    else:
+        argv, shell = TEST_COMMAND, False
     return _run(QualityCheckSpec(
         name="test",
         area="backend",
         operation="build",
-        argv=_placeholder("test"),        # e.g. ["bun", "test"] or ["uv", "run", "pytest", "-q"]
+        argv=argv,
+        shell=shell,
         timeout_seconds=600,
     ), run)
 
