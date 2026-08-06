@@ -85,6 +85,7 @@ def execute(run, phase: Phase, call: AgentCall) -> EnvelopeBase:
         "prompt": call.prompt,
         "previous_envelope": call.previous.model_dump_json(indent=2) if call.previous else "(none)",
         "context_handoff_dir": str(run.context_handoff_dir),
+        **run.extra_vars,
     }
     system_text = prompts.render(agent.prompt_engineering.system, variables)
     user_text = prompts.render(agent.prompt_engineering.user, variables)

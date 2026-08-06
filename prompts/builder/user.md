@@ -1,34 +1,19 @@
-# Build Task
-
 ## Variables
 
-### prompt
+### task_context
+{{task_context}}
 
+### prompt
 {{prompt}}
 
 ### previous_envelope
-
 {{previous_envelope}}
-
-### context_handoff_dir
-
-{{context_handoff_dir}}
 
 ## Task
 
-Implement the work described in `prompt`, guided by `previous_envelope` if present, then emit your `Report` JSON.
+Implement the plan. If previous_envelope contains test failures, fix them.
 
 ## Report
 
-Respond with ONLY valid JSON matching `BuildOutput` — no prose before or after:
-
-```json
-{
-  "status": "success",
-  "summary": "<one sentence describing what you built>",
-  "changed_files": ["src/server.ts"],
-  "artifacts": [],
-  "commit_message": "<imperative one-line git subject for the code you changed — this is what the commit of your work will say>",
-  "notes_for_next_agent": "<how to verify this work>"
-}
-```
+Respond with ONLY a JSON object:
+{"status": "success", "summary": "one line", "artifacts": [], "notes_for_next_agent": "key risks or decisions the reviewer must know", "changed_files": ["src/x.py"], "commit_message": "feat: <slug>"}
