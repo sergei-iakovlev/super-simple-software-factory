@@ -28,6 +28,11 @@ def ensure_worktree(repo: Path, state_dir: Path, task: Task, adw_id: str) -> Pat
     tbranch = task_branch(task)
     subprocess.run(["git", "branch", tbranch, "origin/main"], cwd=repo, capture_output=True, text=True)
     subprocess.run(["git", "branch", tbranch, "main"], cwd=repo, capture_output=True, text=True)
+    # The adw->task MR (created in `finish`) needs this branch to exist on the
+    # remote as its target — without this push, glab creates the MR against a
+    # target ref GitLab can't resolve, which it then reports as unmergeable
+    # ("has_conflicts") instead of "branch not found".
+    subprocess.run(["git", "push", "-u", "origin", tbranch], cwd=repo, capture_output=True, text=True)
 
     abranch = adw_branch(adw_id, task)
     _run(repo, "git", "worktree", "add", str(worktree), "-B", abranch, tbranch)
