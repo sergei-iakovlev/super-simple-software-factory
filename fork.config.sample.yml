@@ -1,0 +1,3 @@
+# Copy to fork.config.yml (gitignored) and set machine-local absolute paths.
+skills_root: "D:/git/root/zennolab_platform/zp8/projectmanagement/zennolab.platform.claude.marketplace/plugins/zenno-process/skills"
+state_root: "D:/github/super-simple-software-factory/state"

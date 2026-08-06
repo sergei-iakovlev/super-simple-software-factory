@@ -1,0 +1,7 @@
+[project]
+name = "sssf-fork"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]   # keeps pytest away from adws/adw_*test*.py (upstream footgun)
