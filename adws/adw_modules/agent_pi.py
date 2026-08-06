@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,7 @@ from .data_types import PiRequest, PiResult
 from .utils import now_iso, operator_env
 
 PI_PATH = os.environ.get("PI_PATH", "pi")
+PI_CMD = PI_PATH.split()  # "node C:/path/cli.js" -> ["node", "C:/path/cli.js"]
 MODELS_JSON = os.environ.get("PI_MODELS_PATH",
                              str(Path.home() / ".pi" / "agent" / "models.json"))
 
@@ -45,7 +47,7 @@ def _pi_catalog() -> list[tuple[str, str, int]]:
     """Read pi's merged catalog, including built-in providers and custom models."""
     try:
         result = subprocess.run(
-            [PI_PATH, "--list-models"], capture_output=True, text=True,
+            [*PI_CMD, "--list-models"], capture_output=True, text=True,
             timeout=30, env=operator_env(), check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -216,7 +218,7 @@ def run(request: PiRequest, on_event: Optional[Callable[[dict], None]] = None,
     """
     provider, model_id = resolve_model(request.model)
     cmd = [
-        PI_PATH, "-p", "--mode", "json",
+        *PI_CMD, "-p", "--mode", "json",
         "--provider", provider, "--model", model_id,
         "--thinking", request.thinking,
         "--session-id", request.session_id,
@@ -246,6 +248,21 @@ def run(request: PiRequest, on_event: Optional[Callable[[dict], None]] = None,
                                env=operator_env())
     if on_spawn:
         on_spawn(process.pid)
+
+    stderr_chunks: list[str] = []
+    stderr_path = raw_path.parent / "stderr.log"
+
+    def _drain_stderr() -> None:
+        assert process.stderr is not None
+        with stderr_path.open("a") as log:
+            for line in process.stderr:
+                log.write(line)
+                log.flush()
+                stderr_chunks.append(line)
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
     with raw_path.open("a") as raw:
         assert process.stdout is not None
         for line in process.stdout:
@@ -277,10 +294,11 @@ def run(request: PiRequest, on_event: Optional[Callable[[dict], None]] = None,
             if on_event:
                 on_event(event)
 
-    stderr = process.stderr.read() if process.stderr else ""
     result.returncode = process.wait()
+    stderr_thread.join()
     if on_exit:
         on_exit(process.pid)
     if result.returncode != 0 and not result.text:
-        raise RuntimeError(f"pi exited {result.returncode}: {stderr.strip()[-800:]}")
+        stderr = "".join(stderr_chunks)
+        raise RuntimeError(f"pi exited {result.returncode}: {stderr.strip()[-2000:]}")
     return result
