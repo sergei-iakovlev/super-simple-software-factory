@@ -60,7 +60,26 @@ def _origin_project_path(worktree: Path) -> str:
     return path
 
 
+def _find_mr(worktree: Path, source: str) -> dict | None:
+    """Existing MR for `source`, any state (opened/merged/closed) — dedup + merge-status source of truth."""
+    listing = subprocess.run(
+        ["glab", "mr", "list", "--source-branch", source, "--all", "--output", "json"],
+        cwd=worktree, capture_output=True, text=True,
+    )
+    if listing.returncode != 0:
+        return None
+    mrs = json.loads(listing.stdout or "[]")
+    return mrs[0] if mrs else None
+
+
 def mr_create(worktree: Path, source: str, target: str, title: str, assignee_self: bool = False) -> str:
+    # Check first, not create-then-recover-on-error: a retry after a crash
+    # mid-`finish` must never spawn a second MR for the same branch (this is
+    # what produced duplicate MRs on the video-transcribe smoke run).
+    existing = _find_mr(worktree, source)
+    if existing is not None:
+        return existing["web_url"]
+
     args = [
         "glab", "mr", "create",
         "--source-branch", source, "--target-branch", target,
@@ -76,12 +95,11 @@ def mr_create(worktree: Path, source: str, target: str, title: str, assignee_sel
                 return line
         return result.stdout.strip()
 
-    # Restart recovery: an MR for this branch may already exist.
-    listing = _run(worktree, "glab", "mr", "list", "--source-branch", source, "--output", "json")
-    mrs = json.loads(listing.stdout)
-    if not mrs:
-        raise RuntimeError(f"glab mr create failed and no existing MR found: {result.stderr.strip()}")
-    return mrs[0]["web_url"]
+    # Lost a race (MR appeared between the check above and this call).
+    existing = _find_mr(worktree, source)
+    if existing is not None:
+        return existing["web_url"]
+    raise RuntimeError(f"glab mr create failed and no existing MR found: {result.stderr.strip()}")
 
 
 def wait_ci_green(worktree: Path, branch: str, timeout_s: int = 3600) -> None:
@@ -107,8 +125,32 @@ def wait_ci_green(worktree: Path, branch: str, timeout_s: int = 3600) -> None:
         time.sleep(30)
 
 
-def mr_merge(worktree: Path, source: str) -> None:
-    _run(worktree, "glab", "mr", "merge", source, "--yes")
+def mr_merge(worktree: Path, source: str, attempts: int = 5, delay_s: float = 5.0) -> None:
+    """Idempotent, retrying merge.
+
+    Right after `mr_create`, GitLab's merge_status is often still "checking"
+    (pipeline evaluating mergeability) and an immediate `glab mr merge` fails
+    with exit 1 even though the MR is fine — this is what turned the
+    video-transcribe smoke run's single MR into three. Poll `_find_mr` for
+    "merged" first (covers retries after a crash post-merge), then retry the
+    merge call itself with a short backoff.
+    """
+    existing = _find_mr(worktree, source)
+    if existing is not None and existing.get("state") == "merged":
+        return
+
+    last_err = ""
+    for attempt in range(attempts):
+        result = subprocess.run(["glab", "mr", "merge", source, "--yes"], cwd=worktree, capture_output=True, text=True)
+        if result.returncode == 0:
+            return
+        last_err = result.stderr.strip()
+        existing = _find_mr(worktree, source)
+        if existing is not None and existing.get("state") == "merged":
+            return  # merged despite the nonzero exit (e.g. race with a prior attempt)
+        if attempt < attempts - 1:
+            time.sleep(delay_s)
+    raise RuntimeError(f"glab mr merge failed after {attempts} attempts: {last_err}")
 
 
 def remove_worktree(repo: Path, state_dir: Path) -> None:

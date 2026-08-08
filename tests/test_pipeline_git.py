@@ -29,3 +29,71 @@ def test_commit_trailer(tmp_path):
     msg = subprocess.run(["git", "log", "-1", "--format=%B"], cwd=r, check=True, capture_output=True, text=True).stdout
     assert "ADW: ab12cd34" in msg
     assert pg.commit_all(r, "noop", "ab12cd34") == ""  # clean tree
+
+
+class _FakeResult:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def test_mr_create_dedups_against_existing_mr(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(args, cwd=None, capture_output=None, text=None):
+        calls.append(args)
+        if args[:3] == ["glab", "mr", "list"]:
+            return _FakeResult(0, '[{"web_url": "https://gitlab/mr/1", "state": "opened"}]')
+        raise AssertionError(f"unexpected call: {args}")
+
+    monkeypatch.setattr(pg.subprocess, "run", fake_run)
+    url = pg.mr_create(tmp_path, "adw/x", "task/x", "title")
+    assert url == "https://gitlab/mr/1"
+    assert not any(a[:3] == ["glab", "mr", "create"] for a in calls)  # never re-created
+
+
+def test_mr_merge_noop_when_already_merged(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(args, cwd=None, capture_output=None, text=None):
+        calls.append(args)
+        return _FakeResult(0, '[{"web_url": "https://gitlab/mr/1", "state": "merged"}]')
+
+    monkeypatch.setattr(pg.subprocess, "run", fake_run)
+    pg.mr_merge(tmp_path, "adw/x")
+    assert not any(a[:3] == ["glab", "mr", "merge"] for a in calls)  # never called merge
+
+
+def test_mr_merge_retries_then_succeeds(tmp_path, monkeypatch):
+    state = {"merge_calls": 0}
+
+    def fake_run(args, cwd=None, capture_output=None, text=None):
+        if args[:3] == ["glab", "mr", "list"]:
+            return _FakeResult(0, "[]")  # not found yet -> not merged
+        if args[:3] == ["glab", "mr", "merge"]:
+            state["merge_calls"] += 1
+            if state["merge_calls"] < 3:
+                return _FakeResult(1, "", "not mergeable yet")
+            return _FakeResult(0, "merged!")
+        raise AssertionError(f"unexpected call: {args}")
+
+    monkeypatch.setattr(pg.subprocess, "run", fake_run)
+    monkeypatch.setattr(pg.time, "sleep", lambda s: None)
+    pg.mr_merge(tmp_path, "adw/x", attempts=5, delay_s=0)
+    assert state["merge_calls"] == 3
+
+
+def test_mr_merge_raises_after_exhausting_attempts(tmp_path, monkeypatch):
+    def fake_run(args, cwd=None, capture_output=None, text=None):
+        if args[:3] == ["glab", "mr", "list"]:
+            return _FakeResult(0, "[]")
+        if args[:3] == ["glab", "mr", "merge"]:
+            return _FakeResult(1, "", "still checking")
+        raise AssertionError(f"unexpected call: {args}")
+
+    monkeypatch.setattr(pg.subprocess, "run", fake_run)
+    monkeypatch.setattr(pg.time, "sleep", lambda s: None)
+    try:
+        pg.mr_merge(tmp_path, "adw/x", attempts=2, delay_s=0)
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "still checking" in str(e)
