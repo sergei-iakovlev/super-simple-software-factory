@@ -33,6 +33,7 @@ def test_branches_and_siblings(tmp_path):
     assert tf.task_branch(t) == "task/2026-08/06-1200-smoke"
     assert tf.adw_branch("ab12cd34", t) == "adw/ab12cd34-smoke"
     assert tf.sibling(t, "plan") == "docs/queue/2026-08/06-1200-smoke-plan.md"
+    assert tf.sibling(t, "prd") == "docs/prd/2026-08/06-1200-smoke-prd.md"
 
 def test_missing_dod_rejected(tmp_path):
     _mk(tmp_path, text=TASK.replace("## Definition of done", "## Notes"))

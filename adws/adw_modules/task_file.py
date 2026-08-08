@@ -78,7 +78,10 @@ def adw_branch(adw_id: str, task: Task) -> str:
 
 
 def sibling(task: Task, suffix: str) -> str:
-    return f"docs/queue/{task.shard}/{task.stem}-{suffix}.md"
+    # PRDs get their own top-level folder (like ADRs) instead of living
+    # alongside the queue task; plan/review/research stay queue siblings.
+    base = "docs/prd" if suffix == "prd" else "docs/queue"
+    return f"{base}/{task.shard}/{task.stem}-{suffix}.md"
 
 
 def set_status(path: Path, status: str) -> None:
