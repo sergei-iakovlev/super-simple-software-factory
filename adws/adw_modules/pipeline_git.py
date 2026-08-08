@@ -20,14 +20,35 @@ def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True)
 
 
+def _base_branch_file(state_dir: Path) -> Path:
+    return state_dir / "base_branch.txt"
+
+
+def base_branch(state_dir: Path) -> str:
+    """The branch the task branch was cut from — recorded by `ensure_worktree` at pipeline start."""
+    return _base_branch_file(state_dir).read_text(encoding="utf-8").strip()
+
+
 def ensure_worktree(repo: Path, state_dir: Path, task: Task, adw_id: str) -> Path:
     worktree = state_dir / "worktree"
     if worktree.exists():
         return worktree
 
+    # The task branch cuts from whatever branch is currently checked out in
+    # `repo` — not a hardcoded main. This lets the pipeline run against a
+    # task filed on an in-progress feature branch without forcing an
+    # unrelated merge through main first.
+    base = _run(repo, "git", "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if base == "HEAD":
+        raise SystemExit("cannot start the pipeline from a detached HEAD; checkout a branch in the repo first")
+    _base_branch_file(state_dir).write_text(base, encoding="utf-8")
+
     tbranch = task_branch(task)
-    subprocess.run(["git", "branch", tbranch, "origin/main"], cwd=repo, capture_output=True, text=True)
-    subprocess.run(["git", "branch", tbranch, "main"], cwd=repo, capture_output=True, text=True)
+    # Prefer the remote tip of base (keeps a restart consistent even if the
+    # local branch has since moved), fall back to the local ref for a base
+    # branch that was never pushed.
+    subprocess.run(["git", "branch", tbranch, f"origin/{base}"], cwd=repo, capture_output=True, text=True)
+    subprocess.run(["git", "branch", tbranch, base], cwd=repo, capture_output=True, text=True)
     # The adw->task MR (created in `finish`) needs this branch to exist on the
     # remote as its target — without this push, glab creates the MR against a
     # target ref GitLab can't resolve, which it then reports as unmergeable
@@ -172,17 +193,20 @@ def flip_status_on_task_branch(state_dir: Path, task: Task, status: str, adw_id:
 
 
 def finish_on_task_branch(state_dir: Path, task: Task, adw_id: str) -> str:
-    """After the adw->task MR is merged: land on the task branch, mark it done, open task->main.
+    """After the adw->task MR is merged: land on the task branch, mark it done, open task->base.
 
-    Returns the task->main MR url (or the existing one, recovered the same way
-    `mr_create` recovers from a restart).
+    "base" is whatever branch `ensure_worktree` cut the task branch from —
+    not hardcoded main — so the final MR returns to the same branch the work
+    started on. Returns the task->base MR url (or the existing one, recovered
+    the same way `mr_create` recovers from a restart).
     """
     worktree = state_dir / "worktree"
     tbranch = task_branch(task)
+    base = base_branch(state_dir)
     _run(worktree, "git", "fetch", "origin")
     _run(worktree, "git", "checkout", tbranch)
     _run(worktree, "git", "pull")
     set_status(worktree / task.rel_path, "done")
     commit_all(worktree, f"chore: done status for {task.slug}", adw_id)
     push(worktree, tbranch)
-    return mr_create(worktree, tbranch, "main", f"task: {task.slug}", assignee_self=True)
+    return mr_create(worktree, tbranch, base, f"task: {task.slug}", assignee_self=True)

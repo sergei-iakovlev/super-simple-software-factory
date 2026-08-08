@@ -21,6 +21,32 @@ def test_worktree_lifecycle(tmp_path):
     assert out.stdout.strip() == "adw/ab12cd34-smoke"
     assert pg.ensure_worktree(r, state, task, "ab12cd34") == wt  # idempotent restart
 
+def test_worktree_cuts_from_current_branch_not_main(tmp_path):
+    r = _repo(tmp_path); state = tmp_path / "state"; state.mkdir()
+    _git(r, "checkout", "-b", "feature/x")
+    (r / "feature-only.txt").write_text("f"); _git(r, "add", "-A"); _git(r, "commit", "-m", "feature work")
+    task = tf.Task(path=r/"docs/queue/2026-08/06-1200-smoke.md", rel_path="docs/queue/2026-08/06-1200-smoke.md",
+                   slug="smoke", shard="2026-08", stem="06-1200-smoke", status="queued",
+                   workflow=None, blocked_by=[], title="t", body="", definition_of_done="d")
+    wt = pg.ensure_worktree(r, state, task, "ab12cd34")
+    assert (wt / "feature-only.txt").exists()  # branched from feature/x, not main
+    assert pg.base_branch(state) == "feature/x"
+
+
+def test_detached_head_rejected(tmp_path):
+    r = _repo(tmp_path); state = tmp_path / "state"; state.mkdir()
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=r, check=True, capture_output=True, text=True).stdout.strip()
+    _git(r, "checkout", sha)
+    task = tf.Task(path=r/"docs/queue/2026-08/06-1200-smoke.md", rel_path="docs/queue/2026-08/06-1200-smoke.md",
+                   slug="smoke", shard="2026-08", stem="06-1200-smoke", status="queued",
+                   workflow=None, blocked_by=[], title="t", body="", definition_of_done="d")
+    try:
+        pg.ensure_worktree(r, state, task, "ab12cd34")
+        assert False, "expected SystemExit"
+    except SystemExit as e:
+        assert "detached HEAD" in str(e)
+
+
 def test_commit_trailer(tmp_path):
     r = _repo(tmp_path)
     (r / "b.txt").write_text("b")
